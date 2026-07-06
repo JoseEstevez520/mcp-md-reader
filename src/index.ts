@@ -237,12 +237,13 @@ server.tool(
 
 server.tool(
   'md_search_vault',
-  'Searches for text across ALL .md files in a directory. Returns file, section, line, and context for up to 20 matches.',
+  'Searches for text across ALL .md files in a directory. Returns file, section, line, and context.',
   {
     directory: z.string().describe('Absolute path to the directory to search'),
     query: z.string().describe('Text to search for (case-insensitive)'),
+    limit: z.number().optional().default(20).describe('Max results to return (default 20, 0 = unlimited)'),
   },
-  async ({ directory, query }) => {
+  async ({ directory, query, limit }) => {
     try {
       const { stat: fsStat } = await import('node:fs/promises');
       try {
@@ -262,7 +263,7 @@ server.tool(
         };
       }
 
-      const MAX_RESULTS = 20;
+      const MAX_RESULTS = limit === 0 ? Infinity : limit;
       const allResults: { file: string; heading: string; lineNumber: number; context: string }[] = [];
 
       for (const filePath of mdFiles) {
@@ -300,7 +301,7 @@ server.tool(
 
       const header = [
         `Found ${allResults.length} match(es) for "${query}" across ${mdFiles.length} files`,
-        `(showing up to ${MAX_RESULTS} results)`,
+        MAX_RESULTS === Infinity ? '(no limit)' : `(showing up to ${MAX_RESULTS} results)`,
         '',
       ].join('\n');
 
