@@ -86,10 +86,30 @@ async function loadFile(path: string): Promise<string> {
 
 // ── Server setup ───────────────────────────────────────────────────────
 
-const server = new McpServer({
-  name: 'mcp-md-reader',
-  version: '1.2.0',
-});
+const server = new McpServer(
+  {
+    name: 'mcp-md-reader',
+    version: '1.2.0',
+  },
+  {
+    instructions: `mcp-md-reader provides intelligent markdown reading tools that save ~90% of tokens compared to reading full files.
+
+## When to use these tools
+
+- **Reading .md files**: Use md_tree FIRST to see the heading structure, then md_section to read only the section you need. Do NOT read entire markdown files with generic file-reading tools when you can use md_tree + md_section instead.
+- **Searching in markdown**: Use md_search (single file) or md_search_vault (entire directory) instead of generic grep/search tools for .md files.
+- **Understanding vault structure**: Use md_vault_index to get a bird's-eye view of all nodes, connections, and types before drilling into individual files.
+- **Checking metadata**: Use md_frontmatter to read just the YAML frontmatter without loading the full file.
+- **Link analysis**: Use md_graph for a single file's wikilinks, or md_vault_index with query "neighbors" for multi-hop traversal.
+
+## Recommended workflow
+
+1. md_vault_index (query: "stats") → understand the vault
+2. md_vault_index (query: "neighbors", node_id: "x") → find related nodes
+3. md_tree → see structure of a specific file
+4. md_section → read only what you need`,
+  },
+);
 
 // ── Tool: md_tree ──────────────────────────────────────────────────────
 
