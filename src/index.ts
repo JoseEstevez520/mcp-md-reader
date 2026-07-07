@@ -14,7 +14,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { readFile } from 'node:fs/promises';
+import { readFile, stat as fsStat } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import {
   parseMarkdownCached,
@@ -27,15 +27,66 @@ import { buildGraph, findMdFiles } from './graph.js';
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
+const MAX_FILE_SIZE = 2 * 1024 * 1024; // 2 MB limit
+
+/**
+ * Categorize errors into user-friendly messages.
+ */
+function categorizeError(e: any, path: string): string {
+  const code = e?.code;
+  if (code === 'ENOENT') return `File not found: ${path}`;
+  if (code === 'EACCES' || code === 'EPERM') return `Permission denied: ${path}`;
+  if (code === 'EISDIR') return `Path is a directory, not a file: ${path}`;
+  if (code === 'EMFILE' || code === 'ENFILE') return `Too many open files (system limit). Try again shortly.`;
+  if (e?.message) return e.message;
+  return `Unknown error reading: ${path}`;
+}
+
 async function loadFile(path: string): Promise<string> {
-  return readFile(path, 'utf-8');
+  // Check file size before reading to avoid memory issues
+  let s;
+  try {
+    s = await fsStat(path);
+  } catch (e: any) {
+    throw new Error(categorizeError(e, path));
+  }
+
+  if (s.isDirectory()) {
+    throw new Error(`Path is a directory, not a file: ${path}`);
+  }
+
+  if (s.size > MAX_FILE_SIZE) {
+    throw new Error(`File too large (${Math.round(s.size / 1024)}KB > ${MAX_FILE_SIZE / 1024}KB limit): ${path}`);
+  }
+
+  if (s.size === 0) {
+    return ''; // Empty file, not an error
+  }
+
+  let buf: Buffer;
+  try {
+    buf = await readFile(path);
+  } catch (e: any) {
+    throw new Error(categorizeError(e, path));
+  }
+
+  // Detect binary files: check first 8KB for null bytes
+  const checkLen = Math.min(buf.length, 8192);
+  for (let i = 0; i < checkLen; i++) {
+    if (buf[i] === 0) {
+      throw new Error(`Binary file detected (null byte at offset ${i}): ${path}`);
+    }
+  }
+
+  // Decode as UTF-8
+  return buf.toString('utf-8');
 }
 
 // ── Server setup ───────────────────────────────────────────────────────
 
 const server = new McpServer({
   name: 'mcp-md-reader',
-  version: '1.0.0',
+  version: '1.1.0',
 });
 
 // ── Tool: md_tree ──────────────────────────────────────────────────────
@@ -194,11 +245,12 @@ server.tool(
       const mdFiles = await findMdFiles(dirname(path));
 
       const siblingTexts = new Map<string, string>();
-      for (const f of mdFiles) {
-        try {
-          siblingTexts.set(f, await loadFile(f));
-        } catch {
-          // skip unreadable files
+      const siblingSettled = await Promise.allSettled(
+        mdFiles.map(async (f) => ({ path: f, text: await loadFile(f) }))
+      );
+      for (const result of siblingSettled) {
+        if (result.status === 'fulfilled') {
+          siblingTexts.set(result.value.path, result.value.text);
         }
       }
 
@@ -245,7 +297,6 @@ server.tool(
   },
   async ({ directory, query, limit }) => {
     try {
-      const { stat: fsStat } = await import('node:fs/promises');
       try {
         await fsStat(directory);
       } catch {
@@ -266,14 +317,25 @@ server.tool(
       const MAX_RESULTS = limit === 0 ? Infinity : limit;
       const allResults: { file: string; heading: string; lineNumber: number; context: string }[] = [];
 
-      for (const filePath of mdFiles) {
+      // Parallel file reading — batch all reads with Promise.allSettled
+      const BATCH_SIZE = 50;
+      for (let batchStart = 0; batchStart < mdFiles.length; batchStart += BATCH_SIZE) {
         if (allResults.length >= MAX_RESULTS) break;
 
-        try {
-          const text = await loadFile(filePath);
-          const parsed = await parseMarkdownCached(filePath, text);
-          const matches = searchInFile(parsed, query);
+        const batch = mdFiles.slice(batchStart, batchStart + BATCH_SIZE);
+        const settled = await Promise.allSettled(
+          batch.map(async (filePath) => {
+            const text = await loadFile(filePath);
+            const parsed = await parseMarkdownCached(filePath, text);
+            const matches = searchInFile(parsed, query);
+            return { filePath, matches };
+          })
+        );
 
+        for (const result of settled) {
+          if (allResults.length >= MAX_RESULTS) break;
+          if (result.status !== 'fulfilled') continue;
+          const { filePath, matches } = result.value;
           for (const m of matches) {
             if (allResults.length >= MAX_RESULTS) break;
             allResults.push({
@@ -283,8 +345,6 @@ server.tool(
               context: m.context,
             });
           }
-        } catch {
-          // skip unreadable files
         }
       }
 

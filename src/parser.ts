@@ -241,7 +241,34 @@ function flattenTree(nodes: HeadingNode[]): HeadingNode[] {
 }
 
 /**
- * Fuzzy match: case-insensitive substring match, or Levenshtein-like scoring.
+ * Check if a short query (2-3 chars, already lowercased) matches a word boundary
+ * in the target (ORIGINAL casing preserved for camelCase/acronym detection).
+ * "ui" matches "User Interface" (acronym), "da" matches "Dashboard" (prefix).
+ * "sc" matches "SkillCard" (camelCase acronym).
+ */
+function matchesWordBoundary(q: string, target: string): boolean {
+  // Split target into words on spaces, hyphens, underscores, camelCase boundaries
+  const words = target.split(/[\s_\-/]+|(?<=[a-z])(?=[A-Z])/);
+
+  // Direct word-start match: "da" matches "Dashboard"
+  for (const w of words) {
+    if (w.toLowerCase().startsWith(q)) return true;
+  }
+
+  // Acronym match: "ui" matches "User Interface" (initials U+I = "ui")
+  if (q.length >= 2 && q.length <= 5) {
+    const initials = words
+      .filter(w => w.length > 0)
+      .map(w => w[0].toLowerCase())
+      .join('');
+    if (initials.includes(q)) return true;
+  }
+
+  return false;
+}
+
+/**
+ * Fuzzy match: case-insensitive substring match, acronym match, word overlap.
  * Returns similarity 0..1
  */
 function fuzzyScore(query: string, target: string): number {
@@ -251,11 +278,21 @@ function fuzzyScore(query: string, target: string): number {
   // Exact match
   if (q === t) return 1.0;
 
-  // Substring match — only for queries >= 4 chars (avoids "no" matching "conocimiento")
+  // Short queries (2-3 chars): only match on word boundaries to avoid false positives
+  if (q.length >= 2 && q.length < 4) {
+    // Pass ORIGINAL target for camelCase/acronym detection, plus lowercased for prefix
+    if (matchesWordBoundary(q, target.trim())) return 0.85;
+    // Also allow exact word match within target words
+    const tWords = t.split(/\s+/);
+    if (tWords.some(w => w === q)) return 0.9;
+    return 0; // Short queries MUST match boundaries — no substring matching
+  }
+
+  // Substring match — for queries >= 4 chars (avoids "no" matching "conocimiento")
   if (q.length >= 4 && t.includes(q)) return 0.9;
   if (q.length >= 4 && q.includes(t)) return 0.8;
 
-  // Word overlap (ignore words < 3 chars)
+  // Word overlap (ignore words < 3 chars unless they're the only word)
   const qWords = q.split(/\s+/).filter(w => w.length >= 3);
   const tWords = t.split(/\s+/).filter(w => w.length >= 3);
 

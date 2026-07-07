@@ -39,14 +39,25 @@ export async function findMdFiles(dir: string, recursive = false): Promise<strin
   try {
     const entries = await readdir(dir, { withFileTypes: true });
     const files: string[] = [];
+    const subdirPromises: Promise<string[]>[] = [];
 
     for (const e of entries) {
       const fullPath = join(dir, e.name);
       if (e.isFile() && e.name.endsWith('.md')) {
         files.push(fullPath);
-      } else if (recursive && e.isDirectory() && !e.name.startsWith('.')) {
-        const sub = await findMdFiles(fullPath, true);
-        files.push(...sub);
+      } else if (recursive && e.isDirectory() && !e.name.startsWith('.') && !e.name.startsWith('node_modules')) {
+        // Parallelize subdirectory traversal
+        subdirPromises.push(findMdFiles(fullPath, true));
+      }
+    }
+
+    if (subdirPromises.length > 0) {
+      const results = await Promise.allSettled(subdirPromises);
+      for (const result of results) {
+        if (result.status === 'fulfilled') {
+          files.push(...result.value);
+        }
+        // Rejected = permission error or broken symlink, silently skip
       }
     }
 

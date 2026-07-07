@@ -8,6 +8,7 @@
     <img src="https://img.shields.io/badge/license-Apache_2.0-green?style=flat-square" alt="License">
     <img src="https://img.shields.io/badge/node-%3E%3D18-brightgreen?style=flat-square" alt="Node">
     <img src="https://img.shields.io/badge/token_savings-~90%25-orange?style=flat-square" alt="Token Savings">
+    <img src="https://img.shields.io/badge/version-1.1.0-purple?style=flat-square" alt="Version">
   </p>
 </p>
 
@@ -61,16 +62,17 @@ Restart Claude Code. The 6 tools will appear as native tools in your session.
 |-------|--------|
 | **Transport** | stdio (MCP protocol 2024-11-05) |
 | **Parser** | Pure string parsing, zero external deps |
-| **Cache** | LRU with mtime validation (100 entries) |
-| **Matching** | Fuzzy heading match with short-query protection |
+| **Cache** | LRU in memory + persistent disk cache (`%TEMP%/mcp-md-reader-cache/`) with mtime validation, 7-day TTL, 100 entries |
+| **Matching** | Fuzzy heading match with word-boundary, prefix, acronym, and CamelCase support |
+| **Concurrency** | Parallel file reads via `Promise.allSettled` (batch size 50) |
 
 ## How it works
 
-The server parses markdown into a heading tree on first read, caches the result (validated by file modification time), and serves only the requested slice. No external parsing libraries — just string splitting by `#` headings with code-block awareness.
+The server parses markdown into a heading tree on first read, caches the result (validated by file modification time), and serves only the requested slice. The cache persists to disk and survives server restarts. No external parsing libraries — just string splitting by `#` headings with code-block awareness.
 
-The fuzzy matcher scores heading similarity using exact match, substring match (4+ chars only), and word overlap. Queries shorter than 4 characters are rejected to prevent false positives.
+The fuzzy matcher scores heading similarity using exact match, substring match, and word overlap. Short queries (2-3 chars) match on word boundaries, prefixes, acronyms (e.g. "UI" matches "User Interface"), and CamelCase boundaries.
 
-`md_search_vault` recursively scans all `.md` files in a directory tree, skipping hidden folders.
+`md_search_vault` recursively scans all `.md` files in a directory tree in parallel batches, skipping hidden folders and `node_modules`. Binary files and files over 2MB are automatically rejected with clear error messages.
 
 ## Example
 
@@ -94,6 +96,18 @@ Section tokens: ~297 | Full file: ~2428 | Savings: ~88%
 ## Decisions
 - Path B (pgvector + RLS) as baseline...
 ```
+
+## Performance (v1.1.0)
+
+| Metric | Value |
+|--------|-------|
+| Token savings (tree) | ~93% |
+| Token savings (tree + 1 section) | ~91% |
+| Cache speedup | 2.9x |
+| Vault search (162 files) | 31ms |
+| Parse time (14 files) | 1.9ms |
+
+See [CHANGELOG.md](CHANGELOG.md) for full details.
 
 ## Origin
 

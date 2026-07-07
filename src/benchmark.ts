@@ -1,18 +1,21 @@
 #!/usr/bin/env node
 /**
  * Benchmark — test md-reader tools against real vault files.
- * Measures token savings vs full file read.
- * Tests diverse edge cases: code blocks, no headings, deep nesting, etc.
+ * Measures: token savings, response time, cache hit rate, fuzzy matcher accuracy.
+ * Tests diverse edge cases: code blocks, no headings, deep nesting, binary, huge files, etc.
  */
 
 import { readFile } from 'node:fs/promises';
 import {
   parseMarkdown,
+  parseMarkdownCached,
   renderTree,
   findSection,
   searchInFile,
   estimateTokens,
 } from './parser.js';
+import { findMdFiles, extractWikilinks, buildGraph } from './graph.js';
+import { getCacheStats, clearCache } from './cache.js';
 
 // ── Config ─────────────────────────────────────────────────────────────
 
@@ -139,6 +142,18 @@ function pctNum(part: number, whole: number): number {
   return Math.round((1 - part / whole) * 100);
 }
 
+function timeMs(fn: () => void): number {
+  const start = performance.now();
+  fn();
+  return Math.round((performance.now() - start) * 100) / 100;
+}
+
+async function timeMsAsync(fn: () => Promise<void>): Promise<number> {
+  const start = performance.now();
+  await fn();
+  return Math.round((performance.now() - start) * 100) / 100;
+}
+
 // ── Validation checks ─────────────────────────────────────────────────
 
 interface Issue {
@@ -243,14 +258,191 @@ function flattenTree(nodes: any[]): any[] {
   return flat;
 }
 
+// ── Fuzzy matcher tests ───────────────────────────────────────────────
+
+interface FuzzyTest {
+  query: string;
+  heading: string;
+  shouldMatch: boolean;
+  description: string;
+}
+
+const FUZZY_TESTS: FuzzyTest[] = [
+  // Short queries (2-3 chars) — word boundary matching
+  { query: 'UI', heading: 'User Interface', shouldMatch: true, description: '2-char acronym match (UI)' },
+  { query: 'API', heading: 'REST API Reference', shouldMatch: true, description: '3-char exact word in title' },
+  { query: 'no', heading: 'conocimiento', shouldMatch: false, description: '2-char substring reject' },
+  { query: 'en', heading: 'engagement', shouldMatch: true, description: '2-char word-start match' },
+  { query: 'MCP', heading: 'Model Context Protocol', shouldMatch: true, description: '3-char acronym' },
+  { query: 'DB', heading: 'Database Design', shouldMatch: false, description: '2-char NOT a prefix or acronym' },
+  { query: 'DB', heading: 'DB Schema', shouldMatch: true, description: '2-char exact word match' },
+  { query: 'da', heading: 'Dashboard', shouldMatch: true, description: '2-char word-start match' },
+  { query: 'fr', heading: 'frontmatter', shouldMatch: true, description: '2-char word-start match' },
+
+  // Standard queries (4+ chars)
+  { query: 'database', heading: 'Database Design', shouldMatch: true, description: '4+ char substring' },
+  { query: 'sistema', heading: 'Sistema de Clasificacion', shouldMatch: true, description: 'Spanish substring' },
+  { query: 'xyz123', heading: 'Normal Heading', shouldMatch: false, description: 'No match expected' },
+
+  // Multi-word queries
+  { query: 'cross dominio', heading: 'Cross-Dominio Analysis', shouldMatch: true, description: 'Multi-word overlap' },
+
+  // CamelCase boundary detection (pass original casing to matcher)
+  { query: 'SC', heading: 'SkillCard Component', shouldMatch: true, description: '2-char acronym from multi-word' },
+];
+
+function runFuzzyTests(): { passed: number; failed: number; results: string[] } {
+  let passed = 0;
+  let failed = 0;
+  const results: string[] = [];
+
+  for (const test of FUZZY_TESTS) {
+    // Create a minimal parsed structure with just this heading
+    const parsed = parseMarkdown(`# ${test.heading}\nSome content here.`);
+    const section = findSection(parsed, test.query);
+    const matched = section !== null;
+
+    if (matched === test.shouldMatch) {
+      passed++;
+      results.push(`    [PASS] "${test.query}" -> "${test.heading}" (${test.description})`);
+    } else {
+      failed++;
+      results.push(`    [FAIL] "${test.query}" -> "${test.heading}" — expected ${test.shouldMatch ? 'match' : 'no match'}, got ${matched ? 'match' : 'no match'} (${test.description})`);
+    }
+  }
+
+  return { passed, failed, results };
+}
+
+// ── Vault-wide search benchmark ───────────────────────────────────────
+
+async function benchmarkVaultSearch(): Promise<{
+  fileCount: number;
+  timeMs: number;
+  matchCount: number;
+}> {
+  const searchDir = `${VAULT}/15_TRABAJO/SkillNet/07_ANFAIA`;
+  const query = 'sistema';
+
+  const start = performance.now();
+  const mdFiles = await findMdFiles(searchDir, true);
+  let matchCount = 0;
+
+  // Parallel search (same as md_search_vault now does)
+  const BATCH_SIZE = 50;
+  for (let batchStart = 0; batchStart < mdFiles.length; batchStart += BATCH_SIZE) {
+    const batch = mdFiles.slice(batchStart, batchStart + BATCH_SIZE);
+    const settled = await Promise.allSettled(
+      batch.map(async (filePath) => {
+        const text = await readFile(filePath, 'utf-8');
+        const parsed = parseMarkdown(text);
+        return searchInFile(parsed, query).length;
+      })
+    );
+    for (const result of settled) {
+      if (result.status === 'fulfilled') {
+        matchCount += result.value;
+      }
+    }
+  }
+
+  const elapsed = Math.round(performance.now() - start);
+  return { fileCount: mdFiles.length, timeMs: elapsed, matchCount };
+}
+
+// ── Cache benchmark ──────────────────────────────────────────────────
+
+async function benchmarkCache(): Promise<{
+  coldMs: number;
+  warmMs: number;
+  speedup: string;
+}> {
+  // Use the LARGEST file for meaningful cache comparison
+  const largePath = TEST_FILES.find(f => f.tag === 'large')?.path || TEST_FILES[0].path;
+  const text = await readFile(largePath, 'utf-8');
+  const ITERATIONS = 100;
+
+  // Clear cache for cold test
+  clearCache();
+
+  // Cold parse (parseMarkdown without cache — pure CPU cost)
+  const coldStart = performance.now();
+  for (let i = 0; i < ITERATIONS; i++) {
+    parseMarkdown(text);
+  }
+  const coldMs = Math.round((performance.now() - coldStart) * 100) / 100;
+
+  // Warm (cached) — seed cache, then read from it
+  // Note: cache hits involve stat() I/O, so this measures real-world benefit
+  await parseMarkdownCached(largePath, text);
+  const warmStart = performance.now();
+  for (let i = 0; i < ITERATIONS; i++) {
+    await parseMarkdownCached(largePath, text);
+  }
+  const warmMs = Math.round((performance.now() - warmStart) * 100) / 100;
+
+  const speedup = warmMs > 0 ? `${(coldMs / warmMs).toFixed(1)}x` : 'N/A';
+
+  return { coldMs, warmMs, speedup };
+}
+
+// ── Graph benchmark ──────────────────────────────────────────────────
+
+async function benchmarkGraph(): Promise<{
+  fileCount: number;
+  outlinkCount: number;
+  inlinkCount: number;
+  timeMs: number;
+}> {
+  const testPath = `${VAULT}/00_HOME.md`;
+  const start = performance.now();
+
+  let text: string;
+  try {
+    text = await readFile(testPath, 'utf-8');
+  } catch {
+    return { fileCount: 0, outlinkCount: 0, inlinkCount: 0, timeMs: 0 };
+  }
+
+  const { dirname } = await import('node:path');
+  const dir = dirname(testPath);
+  const mdFiles = await findMdFiles(dir);
+
+  const siblingTexts = new Map<string, string>();
+  const settled = await Promise.allSettled(
+    mdFiles.map(async (f) => ({ path: f, text: await readFile(f, 'utf-8') }))
+  );
+  for (const result of settled) {
+    if (result.status === 'fulfilled') {
+      siblingTexts.set(result.value.path, result.value.text);
+    }
+  }
+
+  const graph = await buildGraph(testPath, text, siblingTexts);
+  const elapsed = Math.round(performance.now() - start);
+
+  return {
+    fileCount: mdFiles.length,
+    outlinkCount: graph.outlinks.length,
+    inlinkCount: graph.inlinks.length,
+    timeMs: elapsed,
+  };
+}
+
 // ── Main ───────────────────────────────────────────────────────────────
 
 async function runBenchmark() {
   console.log('');
-  console.log('\u2554' + '\u2550'.repeat(62) + '\u2557');
-  console.log('\u2551          mcp-md-reader  BENCHMARK  (expanded)               \u2551');
-  console.log('\u2551          ' + TEST_FILES.length + ' files, diverse edge cases                     \u2551');
-  console.log('\u255a' + '\u2550'.repeat(62) + '\u255d\n');
+  console.log('\u2554' + '\u2550'.repeat(70) + '\u2557');
+  console.log('\u2551      mcp-md-reader  BENCHMARK  v2.0 (hardened)                       \u2551');
+  console.log('\u2551      ' + TEST_FILES.length + ' files + fuzzy tests + timing + cache + vault search        \u2551');
+  console.log('\u255a' + '\u2550'.repeat(70) + '\u255d\n');
+
+  // ═══════════════════════════════════════════════════════════════════
+  // PHASE 1: Per-file parsing tests
+  // ═══════════════════════════════════════════════════════════════════
+
+  console.log('  PHASE 1: Per-file parsing and token savings\n');
 
   const allResults: Array<{
     file: string;
@@ -265,6 +457,7 @@ async function runBenchmark() {
     fmTokens: number;
     hasFrontmatter: boolean;
     fmArrays: boolean;
+    parseTimeMs: number;
     issues: Issue[];
   }> = [];
 
@@ -286,7 +479,11 @@ async function runBenchmark() {
       continue;
     }
 
-    const parsed = parseMarkdown(text);
+    // Timed parse
+    let parsed: ReturnType<typeof parseMarkdown>;
+    const parseTime = timeMs(() => { parsed = parseMarkdown(text); });
+    parsed = parsed!;
+
     const fullTokens = estimateTokens(text);
     const headingCount = countHeadings(parsed.tree);
 
@@ -303,6 +500,7 @@ async function runBenchmark() {
     }
 
     console.log(`    Full file: ${text.length} chars, ~${fullTokens} tokens, ${parsed.lines.length} lines`);
+    console.log(`    Parse time: ${parseTime}ms`);
     console.log(`    Headings found: ${headingCount}`);
     console.log(`    Frontmatter: ${parsed.frontmatter ? 'yes' : 'no'}${fmArrays ? ' (with arrays)' : ''}`);
     if (issues.length > 0) {
@@ -390,18 +588,84 @@ async function runBenchmark() {
       fmTokens,
       hasFrontmatter: !!parsed.frontmatter,
       fmArrays,
+      parseTimeMs: parseTime,
       issues,
     });
   }
 
-  // ── Summary ──
-  console.log('\n' + '\u2554' + '\u2550'.repeat(62) + '\u2557');
-  console.log('\u2551                       SUMMARY                              \u2551');
-  console.log('\u255a' + '\u2550'.repeat(62) + '\u255d\n');
+  // ═══════════════════════════════════════════════════════════════════
+  // PHASE 2: Fuzzy matcher tests
+  // ═══════════════════════════════════════════════════════════════════
+
+  console.log('\n' + '\u2554' + '\u2550'.repeat(70) + '\u2557');
+  console.log('\u2551  PHASE 2: Fuzzy matcher accuracy                                      \u2551');
+  console.log('\u255a' + '\u2550'.repeat(70) + '\u255d\n');
+
+  const fuzzyResults = runFuzzyTests();
+  for (const line of fuzzyResults.results) {
+    console.log(line);
+  }
+  console.log(`\n    Score: ${fuzzyResults.passed}/${fuzzyResults.passed + fuzzyResults.failed} passed`);
+
+  // ═══════════════════════════════════════════════════════════════════
+  // PHASE 3: Cache benchmark
+  // ═══════════════════════════════════════════════════════════════════
+
+  console.log('\n' + '\u2554' + '\u2550'.repeat(70) + '\u2557');
+  console.log('\u2551  PHASE 3: Cache performance                                           \u2551');
+  console.log('\u255a' + '\u2550'.repeat(70) + '\u255d\n');
+
+  const cacheResult = await benchmarkCache();
+  console.log(`    Cold parse (10x): ${cacheResult.coldMs}ms`);
+  console.log(`    Warm/cached (10x): ${cacheResult.warmMs}ms`);
+  console.log(`    Speedup: ${cacheResult.speedup}`);
+  const cacheStats = getCacheStats();
+  console.log(`    Memory cache entries: ${cacheStats.memoryEntries}`);
+  console.log(`    Disk cache entries: ${cacheStats.diskEntries}`);
+
+  // ═══════════════════════════════════════════════════════════════════
+  // PHASE 4: Vault-wide parallel search
+  // ═══════════════════════════════════════════════════════════════════
+
+  console.log('\n' + '\u2554' + '\u2550'.repeat(70) + '\u2557');
+  console.log('\u2551  PHASE 4: Vault-wide parallel search (md_search_vault)                \u2551');
+  console.log('\u255a' + '\u2550'.repeat(70) + '\u255d\n');
+
+  const vaultResult = await benchmarkVaultSearch();
+  console.log(`    Directory: ${VAULT}/15_TRABAJO/SkillNet/07_ANFAIA`);
+  console.log(`    Files scanned: ${vaultResult.fileCount}`);
+  console.log(`    Matches found: ${vaultResult.matchCount}`);
+  console.log(`    Time: ${vaultResult.timeMs}ms`);
+  if (vaultResult.fileCount > 0) {
+    console.log(`    Per-file avg: ${(vaultResult.timeMs / vaultResult.fileCount).toFixed(1)}ms`);
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  // PHASE 5: Graph benchmark
+  // ═══════════════════════════════════════════════════════════════════
+
+  console.log('\n' + '\u2554' + '\u2550'.repeat(70) + '\u2557');
+  console.log('\u2551  PHASE 5: Graph benchmark (md_graph)                                  \u2551');
+  console.log('\u255a' + '\u2550'.repeat(70) + '\u255d\n');
+
+  const graphResult = await benchmarkGraph();
+  console.log(`    File: ${VAULT}/00_HOME.md`);
+  console.log(`    Sibling .md files: ${graphResult.fileCount}`);
+  console.log(`    Outlinks: ${graphResult.outlinkCount}`);
+  console.log(`    Inlinks: ${graphResult.inlinkCount}`);
+  console.log(`    Time: ${graphResult.timeMs}ms`);
+
+  // ═══════════════════════════════════════════════════════════════════
+  // SUMMARY
+  // ═══════════════════════════════════════════════════════════════════
+
+  console.log('\n' + '\u2554' + '\u2550'.repeat(70) + '\u2557');
+  console.log('\u2551                          SUMMARY                                      \u2551');
+  console.log('\u255a' + '\u2550'.repeat(70) + '\u255d\n');
 
   // Per-file table
-  console.log('  File                          | Lines | Hdgs | Full tok | Tree tok | Save');
-  console.log('  ' + '\u2500'.repeat(92));
+  console.log('  File                          | Lines | Hdgs | Full tok | Tree tok | Save | ms');
+  console.log('  ' + '\u2500'.repeat(96));
   for (const r of allResults) {
     const name = r.file.split('/').pop()!.substring(0, 30).padEnd(30);
     const lines = String(r.lines).padStart(5);
@@ -409,8 +673,9 @@ async function runBenchmark() {
     const full = String(r.fullTokens).padStart(8);
     const tree = String(r.treeTokens).padStart(8);
     const save = pct(r.treeTokens, r.fullTokens).padStart(4);
+    const ms = String(r.parseTimeMs).padStart(6);
     const status = r.issues.filter(i => i.severity === 'bug').length > 0 ? ' BUG' : ' OK';
-    console.log(`  ${name} | ${lines} | ${hdgs} | ${full} | ${tree} | ${save}${status}`);
+    console.log(`  ${name} | ${lines} | ${hdgs} | ${full} | ${tree} | ${save} | ${ms}${status}`);
   }
 
   // Issue summary
@@ -444,15 +709,20 @@ async function runBenchmark() {
   const totalTree = allResults.reduce((s, r) => s + r.treeTokens, 0);
   const totalSection = allResults.reduce((s, r) => s + r.sectionTokens, 0);
   const totalSearch = allResults.reduce((s, r) => s + r.searchTokens, 0);
+  const totalParseMs = allResults.reduce((s, r) => s + r.parseTimeMs, 0);
   const filesWithFM = allResults.filter(r => r.hasFrontmatter).length;
   const filesWithArrayFM = allResults.filter(r => r.fmArrays).length;
 
   console.log(`\n  GRAND TOTAL:`);
-  console.log(`    Files tested:       ${allResults.length}`);
+  console.log(`    Files tested:        ${allResults.length}`);
   console.log(`    Total tokens (full): ~${totalFull}`);
   console.log(`    Total tokens (tree): ~${totalTree}  (${pct(totalTree, totalFull)} savings)`);
   console.log(`    Tree + 1 section:    ~${totalTree + totalSection} vs ~${totalFull} (${pct(totalTree + totalSection, totalFull)} savings)`);
+  console.log(`    Total parse time:    ${totalParseMs.toFixed(1)}ms`);
   console.log(`    Frontmatter parsed:  ${filesWithFM}/${allResults.length} files (${filesWithArrayFM} with arrays)`);
+  console.log(`    Fuzzy matcher:       ${fuzzyResults.passed}/${fuzzyResults.passed + fuzzyResults.failed} tests passed`);
+  console.log(`    Cache speedup:       ${cacheResult.speedup}`);
+  console.log(`    Vault search:        ${vaultResult.fileCount} files in ${vaultResult.timeMs}ms`);
   console.log(`    Total bugs:          ${bugs.length}`);
   console.log(`\n  Verdict: md_tree first, then md_section on demand = massive token savings.\n`);
 }
