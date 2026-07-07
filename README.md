@@ -111,9 +111,9 @@ Section tokens: ~297 | Full file: ~2428 | Savings: ~88%
 - Path B (pgvector + RLS) as baseline...
 ```
 
-### md_vault_index
+## Vault index
 
-The vault index compiles all `.md` files into a graph and exposes queries over it. The index auto-recompiles when stale (>1 hour).
+`md_vault_index` compiles all `.md` files into a graph and exposes queries over it. The index auto-recompiles when stale (>1 hour).
 
 | Query | What it does | Parameters |
 |-------|-------------|------------|
@@ -132,7 +132,7 @@ Neighbors of "mandatos" (depth 2): 8 nodes
 { "mandatos": { "distance": 0, ... }, "agentes": { "distance": 1, ... }, ... }
 ```
 
-## Performance (v1.1.0)
+## Performance
 
 | Metric | Value |
 |--------|-------|
@@ -143,10 +143,6 @@ Neighbors of "mandatos" (depth 2): 8 nodes
 | Parse time (14 files) | 1.9ms |
 
 See [CHANGELOG.md](CHANGELOG.md) for full details.
-
-## Origin
-
-Built as part of the [ANFAIA Summer Grants 2026](https://anfaia.org) research on post-markdown formats for AI agents. The core insight: instead of inventing a new format, make the reader smarter over plain markdown.
 
 ## License
 
