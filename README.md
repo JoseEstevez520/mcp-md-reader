@@ -8,7 +8,7 @@
     <img src="https://img.shields.io/badge/license-Apache_2.0-green?style=flat-square" alt="License">
     <img src="https://img.shields.io/badge/node-%3E%3D18-brightgreen?style=flat-square" alt="Node">
     <img src="https://img.shields.io/badge/token_savings-~90%25-orange?style=flat-square" alt="Token Savings">
-    <img src="https://img.shields.io/badge/version-1.1.0-purple?style=flat-square" alt="Version">
+    <img src="https://img.shields.io/badge/version-1.2.0-purple?style=flat-square" alt="Version">
   </p>
 </p>
 
@@ -50,8 +50,9 @@ Together, optimizing both directions shrinks the full round-trip cost of an agen
 | `md_frontmatter` | YAML frontmatter only | ~99% |
 | `md_graph` | Wikilink graph (outlinks + inlinks) | — |
 | `md_search_vault` | Search across all `.md` files in a directory (recursive) | — |
+| `md_vault_index` | Query the full vault graph: stats, neighbors, paths, types | — |
 
-The intended workflow: call `md_tree` first to see the structure, then `md_section` to read only what you need.
+The intended workflow: call `md_tree` first to see the structure, then `md_section` to read only what you need. Use `md_vault_index` for a bird's-eye view of the entire vault before drilling into individual files.
 
 ## Setup
 
@@ -68,7 +69,7 @@ Then register with Claude Code:
 claude mcp add md-reader -- node /full/path/to/mcp-md-reader/dist/index.js
 ```
 
-Restart Claude Code. The 6 tools will appear as native tools in your session.
+Restart Claude Code. The 7 tools will appear as native tools in your session.
 
 ## Tech stack
 
@@ -115,6 +116,27 @@ Lines: 124-133
 Section tokens: ~297 | Full file: ~2428 | Savings: ~88%
 ## Decisions
 - Path B (pgvector + RLS) as baseline...
+```
+
+### md_vault_index
+
+The vault index compiles all `.md` files into a graph and exposes queries over it. The index auto-recompiles when stale (>1 hour).
+
+| Query | What it does | Parameters |
+|-------|-------------|------------|
+| `stats` | Total nodes, edges, types | — |
+| `node` | Full info for one node | `node_id` |
+| `neighbors` | Nodes within N hops | `node_id`, `depth` |
+| `search_type` | All nodes of a frontmatter type | `node_id` = type |
+| `most_connected` | Top N hubs | `depth` = N |
+| `isolated` | Nodes with zero connections | — |
+| `path` | Shortest path between two nodes | `node_id` = `"a>b"` |
+
+```
+> md_vault_index({vault_path: "/path/to/vault", query: "neighbors", node_id: "mandatos", depth: 2})
+
+Neighbors of "mandatos" (depth 2): 8 nodes
+{ "mandatos": { "distance": 0, ... }, "agentes": { "distance": 1, ... }, ... }
 ```
 
 ## Performance (v1.1.0)

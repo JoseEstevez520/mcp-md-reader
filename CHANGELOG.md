@@ -1,5 +1,40 @@
 # Changelog
 
+## v1.2.0 — Vault Index (2026-07-07)
+
+### New tool: `md_vault_index`
+
+Bird's-eye map of the entire vault. Compiles all `.md` files into a graph index (`graph-index.json`) and exposes 7 query types:
+
+| Query | Description |
+|-------|-------------|
+| `stats` | Node/edge totals, type distribution |
+| `node` | Full info for a specific node (with fuzzy suggestion on miss) |
+| `neighbors` | BFS traversal to N hops |
+| `search_type` | Filter by frontmatter type/tipo |
+| `most_connected` | Top N hubs |
+| `isolated` | Nodes with zero connections |
+| `path` | BFS shortest path between two nodes |
+
+### Integrated compiler
+
+The vault index compiler is now built into the MCP server. No external script dependency needed.
+
+- Parses frontmatter with proper YAML parser (`yaml` package)
+- Builds heading tree, extracts wikilinks (skipping code blocks)
+- Resolves backlinks including path-based IDs for duplicate filenames
+- Auto-recompiles when index is stale (>1 hour) or missing
+- Added `yaml` as dependency
+
+### Files changed
+- `src/vault-index.ts` — New module: compiler + query engine
+- `src/index.ts` — New `md_vault_index` tool, version bump
+- `package.json` — Version 1.2.0, added `yaml` dependency
+- `README.md` — Documented new tool with query reference table
+- `CHANGELOG.md` — This entry
+
+---
+
 ## v1.1.0 — Hardening Release (2026-07-07)
 
 ### 1. Parallel vault search (`md_search_vault`)

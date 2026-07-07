@@ -9,6 +9,7 @@
  *   md_frontmatter(path)      — YAML frontmatter only
  *   md_graph(path)            — wikilink graph (outlinks + inlinks)
  *   md_search_vault(dir, q)   — multi-file search across a directory
+ *   md_vault_index(vault, q)  — query the full vault graph index (map view)
  */
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -24,6 +25,7 @@ import {
   estimateTokens,
 } from './parser.js';
 import { buildGraph, findMdFiles } from './graph.js';
+import { queryIndex, type QueryType } from './vault-index.js';
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
@@ -86,7 +88,7 @@ async function loadFile(path: string): Promise<string> {
 
 const server = new McpServer({
   name: 'mcp-md-reader',
-  version: '1.1.0',
+  version: '1.2.0',
 });
 
 // ── Tool: md_tree ──────────────────────────────────────────────────────
@@ -366,6 +368,29 @@ server.tool(
       ].join('\n');
 
       return { content: [{ type: 'text' as const, text: header + output }] };
+    } catch (e: any) {
+      return { content: [{ type: 'text' as const, text: `Error: ${e.message}` }], isError: true };
+    }
+  }
+);
+
+// ── Tool: md_vault_index ─────────────────────────────────────────────
+
+const VALID_QUERIES = ['stats', 'node', 'neighbors', 'search_type', 'most_connected', 'isolated', 'path'] as const;
+
+server.tool(
+  'md_vault_index',
+  'Queries the full vault graph index — the bird\'s-eye map of all nodes, links, and structure. Use this to understand vault topology, find connections, and navigate before drilling into specific files with md_tree/md_section.',
+  {
+    vault_path: z.string().describe('Absolute path to the vault root directory'),
+    query: z.enum(VALID_QUERIES).describe('Query type: stats | node | neighbors | search_type | most_connected | isolated | path'),
+    node_id: z.string().optional().describe('Node ID (for node, neighbors, path queries). For path: "origin>destination". For search_type: the type value to search.'),
+    depth: z.number().optional().describe('Traversal depth for neighbors (default 1), or N for most_connected top-N (default 10)'),
+  },
+  async ({ vault_path, query, node_id, depth }) => {
+    try {
+      const result = await queryIndex(vault_path, query as QueryType, node_id, depth);
+      return { content: [{ type: 'text' as const, text: result }] };
     } catch (e: any) {
       return { content: [{ type: 'text' as const, text: `Error: ${e.message}` }], isError: true };
     }
