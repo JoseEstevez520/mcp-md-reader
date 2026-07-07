@@ -5,10 +5,7 @@
  * Tools:
  *   md_tree(path)             — heading tree with token estimates
  *   md_section(path, heading) — content of a specific section (fuzzy match)
- *   md_search(path, query)    — text search, returns matching sections
  *   md_frontmatter(path)      — YAML frontmatter only
- *   md_graph(path)            — wikilink graph (outlinks + inlinks)
- *   md_search_vault(dir, q)   — multi-file search across a directory
  *   md_vault_index(vault, q)  — query the full vault graph index (map view)
  */
 
@@ -16,15 +13,12 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { readFile, stat as fsStat } from 'node:fs/promises';
-import { dirname } from 'node:path';
 import {
   parseMarkdownCached,
   renderTree,
   findSection,
-  searchInFile,
   estimateTokens,
 } from './parser.js';
-import { buildGraph, findMdFiles } from './graph.js';
 import { queryIndex, type QueryType } from './vault-index.js';
 
 // ── Helpers ────────────────────────────────────────────────────────────
@@ -89,7 +83,7 @@ async function loadFile(path: string): Promise<string> {
 const server = new McpServer(
   {
     name: 'mcp-md-reader',
-    version: '1.2.0',
+    version: '1.3.0',
   },
   {
     instructions: `mcp-md-reader provides intelligent markdown reading tools that save ~90% of tokens compared to reading full files.
@@ -97,10 +91,8 @@ const server = new McpServer(
 ## When to use these tools
 
 - **Reading .md files**: Use md_tree FIRST to see the heading structure, then md_section to read only the section you need. Do NOT read entire markdown files with generic file-reading tools when you can use md_tree + md_section instead.
-- **Searching in markdown**: Use md_search (single file) or md_search_vault (entire directory) instead of generic grep/search tools for .md files.
 - **Understanding vault structure**: Use md_vault_index to get a bird's-eye view of all nodes, connections, and types before drilling into individual files.
 - **Checking metadata**: Use md_frontmatter to read just the YAML frontmatter without loading the full file.
-- **Link analysis**: Use md_graph for a single file's wikilinks, or md_vault_index with query "neighbors" for multi-hop traversal.
 
 ## Recommended workflow
 
@@ -179,48 +171,6 @@ server.tool(
   }
 );
 
-// ── Tool: md_search ────────────────────────────────────────────────────
-
-server.tool(
-  'md_search',
-  'Searches for text within a markdown file and returns matching lines with their section context.',
-  {
-    path: z.string().describe('Absolute path to the .md file'),
-    query: z.string().describe('Text to search for (case-insensitive)'),
-  },
-  async ({ path, query }) => {
-    try {
-      const text = await loadFile(path);
-      const parsed = await parseMarkdownCached(path, text);
-      const results = searchInFile(parsed, query);
-
-      if (results.length === 0) {
-        return {
-          content: [{ type: 'text' as const, text: `No matches for "${query}".` }],
-        };
-      }
-
-      const fullTokens = estimateTokens(text);
-      const output = results.map((r, i) => [
-        `--- Match ${i + 1} (line ${r.lineNumber}, under "${r.heading}") ---`,
-        r.context,
-      ].join('\n')).join('\n\n');
-
-      const resultTokens = estimateTokens(output);
-
-      const header = [
-        `Found ${results.length} match(es) for "${query}"`,
-        `Result tokens: ~${resultTokens} | Full file: ~${fullTokens} | Savings: ~${Math.round((1 - resultTokens / fullTokens) * 100)}%`,
-        '',
-      ].join('\n');
-
-      return { content: [{ type: 'text' as const, text: header + output }] };
-    } catch (e: any) {
-      return { content: [{ type: 'text' as const, text: `Error: ${e.message}` }], isError: true };
-    }
-  }
-);
-
 // ── Tool: md_frontmatter ───────────────────────────────────────────────
 
 server.tool(
@@ -249,145 +199,6 @@ server.tool(
       return {
         content: [{ type: 'text' as const, text: header + parsed.frontmatterRaw }],
       };
-    } catch (e: any) {
-      return { content: [{ type: 'text' as const, text: `Error: ${e.message}` }], isError: true };
-    }
-  }
-);
-
-// ── Tool: md_graph ────────────────────────────────────────────────────
-
-server.tool(
-  'md_graph',
-  'Returns the wikilink graph for a markdown file: outlinks ([[target]]) and inlinks (other files in the same directory that link to it).',
-  { path: z.string().describe('Absolute path to the .md file') },
-  async ({ path }) => {
-    try {
-      const text = await loadFile(path);
-      const mdFiles = await findMdFiles(dirname(path));
-
-      const siblingTexts = new Map<string, string>();
-      const siblingSettled = await Promise.allSettled(
-        mdFiles.map(async (f) => ({ path: f, text: await loadFile(f) }))
-      );
-      for (const result of siblingSettled) {
-        if (result.status === 'fulfilled') {
-          siblingTexts.set(result.value.path, result.value.text);
-        }
-      }
-
-      const graph = await buildGraph(path, text, siblingTexts);
-
-      const outSection = graph.outlinks.length > 0
-        ? graph.outlinks.map(l =>
-            `  → [[${l.target}]]${l.alias ? ` (alias: ${l.alias})` : ''} (line ${l.line})`
-          ).join('\n')
-        : '  (none)';
-
-      const inSection = graph.inlinks.length > 0
-        ? graph.inlinks.map(l =>
-            `  ← ${l.source}${l.alias ? ` (alias: ${l.alias})` : ''} (line ${l.line})`
-          ).join('\n')
-        : '  (none)';
-
-      const output = [
-        `Graph for: ${path}`,
-        ``,
-        `Outlinks (${graph.outlinks.length}):`,
-        outSection,
-        ``,
-        `Inlinks (${graph.inlinks.length}):`,
-        inSection,
-      ].join('\n');
-
-      return { content: [{ type: 'text' as const, text: output }] };
-    } catch (e: any) {
-      return { content: [{ type: 'text' as const, text: `Error: ${e.message}` }], isError: true };
-    }
-  }
-);
-
-// ── Tool: md_search_vault ─────────────────────────────────────────────
-
-server.tool(
-  'md_search_vault',
-  'Searches for text across ALL .md files in a directory. Returns file, section, line, and context.',
-  {
-    directory: z.string().describe('Absolute path to the directory to search'),
-    query: z.string().describe('Text to search for (case-insensitive)'),
-    limit: z.number().optional().default(20).describe('Max results to return (default 20, 0 = unlimited)'),
-  },
-  async ({ directory, query, limit }) => {
-    try {
-      try {
-        await fsStat(directory);
-      } catch {
-        return {
-          content: [{ type: 'text' as const, text: `Directory not found: ${directory}` }],
-          isError: true,
-        };
-      }
-
-      const mdFiles = await findMdFiles(directory, true);
-
-      if (mdFiles.length === 0) {
-        return {
-          content: [{ type: 'text' as const, text: `No .md files found in ${directory}` }],
-        };
-      }
-
-      const MAX_RESULTS = limit === 0 ? Infinity : limit;
-      const allResults: { file: string; heading: string; lineNumber: number; context: string }[] = [];
-
-      // Parallel file reading — batch all reads with Promise.allSettled
-      const BATCH_SIZE = 50;
-      for (let batchStart = 0; batchStart < mdFiles.length; batchStart += BATCH_SIZE) {
-        if (allResults.length >= MAX_RESULTS) break;
-
-        const batch = mdFiles.slice(batchStart, batchStart + BATCH_SIZE);
-        const settled = await Promise.allSettled(
-          batch.map(async (filePath) => {
-            const text = await loadFile(filePath);
-            const parsed = await parseMarkdownCached(filePath, text);
-            const matches = searchInFile(parsed, query);
-            return { filePath, matches };
-          })
-        );
-
-        for (const result of settled) {
-          if (allResults.length >= MAX_RESULTS) break;
-          if (result.status !== 'fulfilled') continue;
-          const { filePath, matches } = result.value;
-          for (const m of matches) {
-            if (allResults.length >= MAX_RESULTS) break;
-            allResults.push({
-              file: filePath,
-              heading: m.heading,
-              lineNumber: m.lineNumber,
-              context: m.context,
-            });
-          }
-        }
-      }
-
-      if (allResults.length === 0) {
-        return {
-          content: [{ type: 'text' as const, text: `No matches for "${query}" in ${mdFiles.length} files.` }],
-        };
-      }
-
-      const output = allResults.map((r, i) => [
-        `--- Match ${i + 1}: ${r.file} (line ${r.lineNumber}, under "${r.heading}") ---`,
-        r.context,
-      ].join('\n')).join('\n\n');
-
-      const header = [
-        `Found ${allResults.length} match(es) for "${query}" across ${mdFiles.length} files`,
-        MAX_RESULTS === Infinity ? '(no limit)' : `(showing up to ${MAX_RESULTS} results)`,
-        '',
-      ].join('\n');
-
-      return { content: [{ type: 'text' as const, text: header + output }] };
     } catch (e: any) {
       return { content: [{ type: 'text' as const, text: `Error: ${e.message}` }], isError: true };
     }

@@ -1,5 +1,30 @@
 # Changelog
 
+## v1.3.0 — Focus (2026-07-07)
+
+### Removed tools
+
+Removed 3 tools that duplicate what native LLM tools (Grep, Read) already do better:
+
+- `md_search` — Grep is faster and supports regex
+- `md_search_vault` — Grep is faster and more flexible
+- `md_graph` — `md_vault_index` with query "node" provides the same data vault-wide
+
+### What remains (4 tools)
+
+| Tool | Why it stays |
+|------|-------------|
+| `md_tree` | Unique — heading tree with token estimates, no native equivalent |
+| `md_section` | Unique — reads exactly one section with fuzzy match, knows where headings end |
+| `md_frontmatter` | Convenient — extracts YAML cleanly without guessing line limits |
+| `md_vault_index` | Unique — full vault graph with BFS, paths, stats |
+
+### Server instructions
+
+Added MCP `instructions` field so LLMs know when to prefer md-reader tools over native Read/Grep.
+
+---
+
 ## v1.2.0 — Vault Index (2026-07-07)
 
 ### New tool: `md_vault_index`
