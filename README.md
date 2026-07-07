@@ -138,9 +138,13 @@ Neighbors of "mandatos" (depth 2): 8 nodes
 |--------|-------|
 | Token savings (tree) | ~93% |
 | Token savings (tree + 1 section) | ~91% |
-| Cache speedup | 2.9x |
-| Vault search (162 files) | 31ms |
-| Parse time (14 files) | 1.9ms |
+| Cache speedup | 4.5x |
+| Vault search (165 files) | 31ms |
+| Parse time (14 files) | 1.6ms |
+| Vault index compile (699 nodes) | 355ms |
+| Avg query time | 0.61ms |
+| Fuzzy matcher | 14/14 |
+| Bugs | 0 |
 
 See [CHANGELOG.md](CHANGELOG.md) for full details.
 

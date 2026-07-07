@@ -16,6 +16,7 @@ import {
 } from './parser.js';
 import { findMdFiles, extractWikilinks, buildGraph } from './graph.js';
 import { getCacheStats, clearCache } from './cache.js';
+import { compileIndex, queryIndex } from './vault-index.js';
 
 // ── Config ─────────────────────────────────────────────────────────────
 
@@ -656,6 +657,51 @@ async function runBenchmark() {
   console.log(`    Time: ${graphResult.timeMs}ms`);
 
   // ═══════════════════════════════════════════════════════════════════
+  // PHASE 6: Vault index benchmark (md_vault_index)
+  // ═══════════════════════════════════════════════════════════════════
+
+  console.log('\n' + '\u2554' + '\u2550'.repeat(70) + '\u2557');
+  console.log('\u2551  PHASE 6: Vault index (md_vault_index)                                \u2551');
+  console.log('\u255a' + '\u2550'.repeat(70) + '\u255d\n');
+
+  // Compile time
+  const compileStart = performance.now();
+  const index = await compileIndex(VAULT);
+  const compileMs = Math.round(performance.now() - compileStart);
+  console.log(`    Compile: ${index.meta.total_nodes} nodes, ${index.meta.total_edges} edges in ${compileMs}ms`);
+  console.log(`    Per-file avg: ${(compileMs / index.meta.total_nodes).toFixed(2)}ms`);
+
+  // Query benchmarks — run each query type and measure time
+  const queries: Array<{ name: string; query: string; nodeId?: string; depth?: number }> = [
+    { name: 'stats', query: 'stats' },
+    { name: 'node', query: 'node', nodeId: '00_home' },
+    { name: 'neighbors (d=1)', query: 'neighbors', nodeId: '00_intentia_indice', depth: 1 },
+    { name: 'neighbors (d=2)', query: 'neighbors', nodeId: '00_intentia_indice', depth: 2 },
+    { name: 'most_connected', query: 'most_connected', depth: 10 },
+    { name: 'isolated', query: 'isolated' },
+    { name: 'search_type', query: 'search_type', nodeId: 'indice' },
+    { name: 'path', query: 'path', nodeId: 'brainstorm>00_intentia_indice' },
+  ];
+
+  console.log('\n    Query benchmarks (avg of 50 runs):');
+  console.log('    ' + '\u2500'.repeat(55));
+
+  const queryTimings: Array<{ name: string; avgMs: number; resultSize: number }> = [];
+
+  for (const q of queries) {
+    const RUNS = 50;
+    let resultSize = 0;
+    const qStart = performance.now();
+    for (let i = 0; i < RUNS; i++) {
+      const result = await queryIndex(VAULT, q.query as any, q.nodeId, q.depth);
+      if (i === 0) resultSize = result.length;
+    }
+    const avgMs = Math.round(((performance.now() - qStart) / RUNS) * 100) / 100;
+    queryTimings.push({ name: q.name, avgMs, resultSize });
+    console.log(`    ${q.name.padEnd(22)} ${String(avgMs).padStart(6)}ms  (${resultSize} chars)`);
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
   // SUMMARY
   // ═══════════════════════════════════════════════════════════════════
 
@@ -724,6 +770,9 @@ async function runBenchmark() {
   console.log(`    Cache speedup:       ${cacheResult.speedup}`);
   console.log(`    Vault search:        ${vaultResult.fileCount} files in ${vaultResult.timeMs}ms`);
   console.log(`    Total bugs:          ${bugs.length}`);
+  console.log(`    Vault index compile: ${index.meta.total_nodes} nodes in ${compileMs}ms`);
+  const avgQueryMs = queryTimings.reduce((s, q) => s + q.avgMs, 0) / queryTimings.length;
+  console.log(`    Avg query time:      ${avgQueryMs.toFixed(2)}ms`);
   console.log(`\n  Verdict: md_tree first, then md_section on demand = massive token savings.\n`);
 }
 
