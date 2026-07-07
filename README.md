@@ -18,7 +18,27 @@
 
 ## The problem
 
-A 3,000-token markdown file might have 12 sections. The agent needs one. Without `mcp-md-reader`, it reads all 3,000 tokens. With it, it reads ~60 tokens for the tree and ~300 for the section. **~90% savings on average.**
+AI agents burn tokens in two directions: **reading** existing content and **writing** new content. Both are wasteful by default.
+
+On the **write** side, generative content is becoming a core agent capability. When an agent builds a dashboard or report, it writes thousands of tokens of HTML+CSS+JS boilerplate. A compact DSL like [UIDL](https://github.com/JoseEstevez520/mcp-ui-renderer) produces the same visual output at a fraction of the cost:
+
+```
+┌────────────┬──────────────┬───────┐
+│            │ Raw HTML     │ UIDL  │
+├────────────┼──────────────┼───────┤
+│ Bytes      │ 6,160        │ 1,541 │
+├────────────┼──────────────┼───────┤
+│ Lines      │ 83           │ 43    │
+├────────────┼──────────────┼───────┤
+│ Tokens (~) │ ~1,760       │ ~440  │
+├────────────┼──────────────┼───────┤
+│ Ratio      │ 100%         │ 25%   │
+└────────────┴──────────────┴───────┘
+```
+
+On the **read** side — which is what this server solves — a 3,000-token markdown file might have 12 sections. The agent needs one. Without `mcp-md-reader`, it reads all 3,000 tokens. With it, it reads ~60 tokens for the tree and ~300 for the section. **~90% savings.**
+
+Together, optimizing both directions shrinks the full round-trip cost of an agent interacting with content — more room in the context window to actually reason, less spent on boilerplate.
 
 ## Tools
 
