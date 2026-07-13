@@ -466,3 +466,188 @@ function formatPath(nodes: Record<string, VaultNode>, nodeId?: string): string {
 
   return `No path found between "${origin}" and "${destination}".`;
 }
+
+// ── find: query-driven navigation ────────────────────────────────────────
+//
+// The graph queries above are the *map* — you ask for a node and get its
+// surroundings. `find` is the *front door*: given a natural-language need,
+// it returns only the sections whose titles/tags match, ranked, so the LLM
+// lands on the right place without loading the whole catalog.
+//
+// Deterministic: pure structural matching on titles, tags and doc names.
+// No embeddings, no LLM. The consuming model does the reasoning over the
+// compact result and then reads one section with md_section.
+
+const FIND_BUDGET_TOKENS = 4000;   // stop adding regions past this
+const MAX_REGIONS = 12;            // hard cap on regions returned
+const AMBIGUOUS_DOC_SPREAD = 20;   // more matching docs than this → doc list
+
+const STOPWORDS = new Set([
+  'the', 'and', 'for', 'with', 'como', 'cual', 'cuales', 'donde', 'que',
+  'los', 'las', 'del', 'una', 'uno', 'por', 'con', 'para', 'sobre',
+  'este', 'esta', 'esto', 'sus', 'como',
+]);
+
+function est(s: string): number {
+  return Math.ceil(s.length / 4);
+}
+
+function tokenize(s: string): string[] {
+  return s
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(w => w.length >= 3 && !STOPWORDS.has(w));
+}
+
+/** Two tokens are related if one contains the other or they share a 4+ char prefix.
+ *  Catches Spanish morphology (aislar↔aislamiento, config↔configuración). */
+function related(a: string, b: string): boolean {
+  if (a.includes(b) || b.includes(a)) return true;
+  let i = 0;
+  while (i < a.length && i < b.length && a[i] === b[i]) i++;
+  return i >= 4;
+}
+
+function docTags(fm: Record<string, unknown> | null): string[] {
+  if (!fm) return [];
+  const raw = (fm.tags ?? fm.etiquetas ?? fm.tag ?? []) as unknown;
+  const arr = Array.isArray(raw) ? raw : [raw];
+  return arr.map(t => String(t).toLowerCase());
+}
+
+/** Query tokens that appear in a piece of text (via substring or `related`). */
+function matched(qTokens: string[], text: string): string[] {
+  const tl = text.toLowerCase();
+  const tw = tokenize(text);
+  return qTokens.filter(q => tl.includes(q) || tw.some(w => related(q, w)));
+}
+
+interface FlatHeading {
+  title: string;
+  breadcrumb: string[]; // ancestor titles within the doc
+}
+
+function flattenWithPath(structure: HeadingNode[], trail: string[] = []): FlatHeading[] {
+  const out: FlatHeading[] = [];
+  for (const h of structure) {
+    out.push({ title: h.title, breadcrumb: [...trail] });
+    if (h.children && h.children.length) {
+      out.push(...flattenWithPath(h.children, [...trail, h.title]));
+    }
+  }
+  return out;
+}
+
+interface DocMatch {
+  path: string;
+  absPath: string;
+  linksIn: number;
+  coverage: number; // distinct query tokens matched anywhere in this doc
+  headings: { title: string; breadcrumb: string[]; hits: number }[];
+}
+
+export async function findInVault(vaultRoot: string, query: string): Promise<string> {
+  const trimmed = query.trim();
+  if (!trimmed) return 'Error: query is required for find.';
+
+  const { nodes } = await getIndex(vaultRoot);
+  const qTokens = tokenize(trimmed);
+  const q = qTokens.length ? qTokens : [trimmed.toLowerCase()];
+
+  const matches: DocMatch[] = [];
+
+  for (const [id, node] of Object.entries(nodes)) {
+    const flat = flattenWithPath(node.structure);
+    const covered = new Set<string>();
+
+    // doc name + tags contribute to coverage (but aren't shown as sections)
+    for (const t of matched(q, id.replace(/_/g, ' '))) covered.add(t);
+    for (const tag of docTags(node.frontmatter)) {
+      for (const t of matched(q, tag)) covered.add(t);
+    }
+
+    const headings = flat
+      .map(h => {
+        const hits = matched(q, h.title);
+        for (const t of hits) covered.add(t);
+        return { title: h.title, breadcrumb: h.breadcrumb, hits: hits.length };
+      })
+      .filter(h => h.hits > 0)
+      .sort((a, b) => b.hits - a.hits);
+
+    if (covered.size === 0) continue;
+
+    // matched by name/tag only → surface top-level headings as entry points
+    const shownHeadings = headings.length > 0
+      ? headings
+      : flat.slice(0, 4).map(h => ({ title: h.title, breadcrumb: h.breadcrumb, hits: 0 }));
+
+    matches.push({
+      path: node.path,
+      absPath: join(vaultRoot, node.path),
+      linksIn: node.links_in.length,
+      coverage: covered.size,
+      headings: shownHeadings,
+    });
+  }
+
+  // ── No match → offer entry points ──
+  if (matches.length === 0) {
+    const hubs = Object.values(nodes)
+      .map(n => ({ path: n.path, deg: n.links_in.length + n.links_out.length }))
+      .sort((a, b) => b.deg - a.deg)
+      .slice(0, 8)
+      .map(h => `  ${h.path}`);
+    return [
+      `No structural match for "${query}".`,
+      `Titles, tags and filenames don't contain these terms. Try broader words, or`,
+      `start from one of the most-connected notes:`,
+      ...hubs,
+    ].join('\n');
+  }
+
+  // rank: coverage first (more query terms = more relevant), then importance
+  matches.sort((a, b) =>
+    b.coverage - a.coverage ||
+    b.headings[0].hits - a.headings[0].hits ||
+    b.linksIn - a.linksIn,
+  );
+
+  // ── Ambiguous → too many docs, return a ranked doc list ──
+  if (matches.length > AMBIGUOUS_DOC_SPREAD) {
+    const top = matches.slice(0, 15).map(m =>
+      `  ${m.path.padEnd(50)} (${m.headings.length} sec, in:${m.linksIn})`,
+    );
+    return [
+      `"${query}" is broad — ${matches.length} documents match.`,
+      `Showing the 15 most relevant. Refine the query, or open one with md_tree:`,
+      '',
+      ...top,
+    ].join('\n');
+  }
+
+  // ── Normal → compact regions, budget-capped ──
+  const blocks: string[] = [];
+  let used = 0;
+  let shown = 0;
+  for (const m of matches) {
+    const lines = [`${m.absPath}   (in:${m.linksIn})`];
+    for (const h of m.headings.slice(0, 6)) {
+      const crumb = h.breadcrumb.length ? h.breadcrumb.join(' › ') + ' › ' : '';
+      lines.push(`  · ${crumb}${h.title}`);
+    }
+    const block = lines.join('\n');
+    if (shown > 0 && used + est(block) > FIND_BUDGET_TOKENS) break;
+    blocks.push(block);
+    used += est(block);
+    if (++shown >= MAX_REGIONS) break;
+  }
+
+  const header = [
+    `Found ${matches.length} matching document(s) for "${query}" (showing ${shown}).`,
+    `Read a section →  md_section(path, heading)`,
+    '',
+  ].join('\n');
+
+  return header + blocks.join('\n\n');
+}

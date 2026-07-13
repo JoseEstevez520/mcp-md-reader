@@ -8,7 +8,7 @@
     <img src="https://img.shields.io/badge/license-Apache_2.0-green?style=flat-square" alt="License">
     <img src="https://img.shields.io/badge/node-%3E%3D18-brightgreen?style=flat-square" alt="Node">
     <img src="https://img.shields.io/badge/token_savings-~90%25-orange?style=flat-square" alt="Token Savings">
-    <img src="https://img.shields.io/badge/version-1.3.0-purple?style=flat-square" alt="Version">
+    <img src="https://img.shields.io/badge/version-1.4.0-purple?style=flat-square" alt="Version">
   </p>
 </p>
 
@@ -24,12 +24,13 @@ A 3,000-token markdown file might have 12 sections. The agent needs one. Without
 
 | Tool | What it does | Typical savings |
 |------|-------------|-----------------|
+| `md_find` | Find the sections that match a need, across the whole vault, ranked | — |
 | `md_tree` | Heading tree with estimated token counts | ~93% |
 | `md_section` | One section by name (fuzzy match) | ~88-99% |
 | `md_frontmatter` | YAML frontmatter only | ~99% |
 | `md_vault_index` | Query the full vault graph: stats, neighbors, paths, types | — |
 
-The intended workflow: `md_tree` first to see the structure, then `md_section` to read only what you need. `md_vault_index` for a bird's-eye view of the entire vault before drilling into individual files.
+The intended workflow: `md_find` first with what you're looking for → it returns only the matching sections. Then `md_section` to read the one you picked. `md_tree` when you need one file's full structure, and `md_vault_index` to explore links between notes.
 
 ## Setup
 
@@ -46,7 +47,7 @@ Then register with Claude Code:
 claude mcp add md-reader -- node /full/path/to/mcp-md-reader/dist/index.js
 ```
 
-Restart Claude Code. The 4 tools will appear as native tools in your session.
+Restart Claude Code. The 5 tools will appear as native tools in your session.
 
 ## Tech stack
 
@@ -93,9 +94,27 @@ Section tokens: ~297 | Full file: ~2428 | Savings: ~88%
 - Path B (pgvector + RLS) as baseline...
 ```
 
+## Finding sections (`md_find`)
+
+`md_find` is the front door for large vaults. You give it a need in plain language; it searches the compiled index and returns **only the sections whose titles, tags or filenames match**, ranked by how many of your terms they cover — never the whole vault. The consuming LLM reads the compact result and picks one section to open with `md_section`.
+
+It is **deterministic**: pure structural matching (substring + shared-prefix, so `aislar` finds `Aislamiento`). No embeddings, no LLM calls at index time — same philosophy as the rest of the server. Three outcomes: matching regions (normal), a ranked document list (query too broad), or the top hubs as entry points (no match).
+
+```
+> md_find({vault_path: "/path/to/vault", query: "row level security multi-tenant"})
+
+Found 2 matching document(s) for "row level security multi-tenant" (showing 2).
+Read a section →  md_section(path, heading)
+/path/to/vault/base_de_datos/postgres.md   (in:1)
+  · Postgres › Row Level Security
+
+/path/to/vault/seguridad/multitenant.md   (in:1)
+  · Aislamiento multi-tenant
+```
+
 ## Vault index
 
-`md_vault_index` compiles all `.md` files into a graph and exposes queries over it. The index auto-recompiles when stale (>1 hour).
+`md_vault_index` compiles all `.md` files into a graph and exposes queries over it. The index auto-recompiles when stale (>1 hour). `md_find` runs on this same index.
 
 | Query | What it does | Parameters |
 |-------|-------------|------------|

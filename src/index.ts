@@ -3,6 +3,7 @@
  * mcp-md-reader — MCP server for intelligent markdown reading.
  *
  * Tools:
+ *   md_find(vault, query)     — find the sections that match a need (front door)
  *   md_tree(path)             — heading tree with token estimates
  *   md_section(path, heading) — content of a specific section (fuzzy match)
  *   md_frontmatter(path)      — YAML frontmatter only
@@ -19,7 +20,7 @@ import {
   findSection,
   estimateTokens,
 } from './parser.js';
-import { queryIndex, type QueryType } from './vault-index.js';
+import { queryIndex, findInVault, type QueryType } from './vault-index.js';
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
@@ -83,24 +84,44 @@ async function loadFile(path: string): Promise<string> {
 const server = new McpServer(
   {
     name: 'mcp-md-reader',
-    version: '1.3.0',
+    version: '1.4.0',
   },
   {
     instructions: `mcp-md-reader provides intelligent markdown reading tools that save ~90% of tokens compared to reading full files.
 
 ## When to use these tools
 
-- **Reading .md files**: Use md_tree FIRST to see the heading structure, then md_section to read only the section you need. Do NOT read entire markdown files with generic file-reading tools when you can use md_tree + md_section instead.
-- **Understanding vault structure**: Use md_vault_index to get a bird's-eye view of all nodes, connections, and types before drilling into individual files.
+- **Finding where something is**: Use md_find FIRST with a natural-language need (e.g. "row level security multi-tenant"). It returns only the matching sections across the whole vault, ranked, without loading everything. This is the front door for large vaults.
+- **Reading .md files**: Use md_tree to see one file's heading structure, then md_section to read only the section you need. Do NOT read entire markdown files with generic file-reading tools when md_tree + md_section will do.
+- **Exploring relationships**: Use md_vault_index for graph queries — neighbors, shortest path, hubs, stats.
 - **Checking metadata**: Use md_frontmatter to read just the YAML frontmatter without loading the full file.
 
 ## Recommended workflow
 
-1. md_vault_index (query: "stats") → understand the vault
-2. md_vault_index (query: "neighbors", node_id: "x") → find related nodes
-3. md_tree → see structure of a specific file
-4. md_section → read only what you need`,
+1. md_find (query: what you're looking for) → the few sections that match
+2. md_section (path, heading) → read only the section you picked
+3. md_tree → if you need the full structure of one file
+4. md_vault_index → to explore links (neighbors) or paths between notes`,
   },
+);
+
+// ── Tool: md_find ──────────────────────────────────────────────────────
+
+server.tool(
+  'md_find',
+  'Front door for navigating a vault: given a natural-language need, returns only the sections whose titles/tags match, ranked by relevance — without loading the whole vault. Then read one with md_section(path, heading). Deterministic (structural match on titles, tags, filenames — no embeddings).',
+  {
+    vault_path: z.string().describe('Absolute path to the vault root directory'),
+    query: z.string().describe('What you are looking for, in natural language (e.g. "row level security multi-tenant")'),
+  },
+  async ({ vault_path, query }) => {
+    try {
+      const result = await findInVault(vault_path, query);
+      return { content: [{ type: 'text' as const, text: result }] };
+    } catch (e: any) {
+      return { content: [{ type: 'text' as const, text: `Error: ${e.message}` }], isError: true };
+    }
+  }
 );
 
 // ── Tool: md_tree ──────────────────────────────────────────────────────

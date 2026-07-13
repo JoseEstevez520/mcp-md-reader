@@ -1,5 +1,32 @@
 # Changelog
 
+## v1.4.0 — Find (2026-07-13)
+
+### New tool: `md_find`
+
+A query-driven front door for navigating a vault. Instead of returning the whole graph (`md_vault_index`) and letting the model figure it out, `md_find` takes a natural-language need and returns **only the sections whose titles, tags or filenames match**, ranked by relevance.
+
+- Runs on the existing compiled index — no new build step.
+- **Deterministic**: structural matching only (substring + 4-char shared prefix, so `aislar` matches `Aislamiento`, `config` matches `Configuración`). No embeddings, no LLM at index time.
+- Compact text output (not JSON): grouped by document, absolute path + breadcrumb per section, so it chains straight into `md_section(path, heading)`.
+- Three outcomes:
+  - **regions** — matching sections, budget-capped (~4000 tokens), grouped by doc;
+  - **document list** — when the query is too broad (>20 docs match), a ranked list to refine;
+  - **entry points** — when nothing matches, the most-connected notes as a starting point.
+
+### Why
+
+`md_vault_index` gives the whole catalog; the model still had to know what to ask for. `md_find` closes that gap — it turns "what am I looking for" into "here are the 3 sections that matter" in one call, which is what makes the reader usable on large vaults. The existing reading tools (`md_tree`, `md_section`, `md_frontmatter`) are unchanged — `md_find` just becomes the recommended first step.
+
+### Files changed
+- `src/vault-index.ts` — New `findInVault()`: tokenizer, structural scorer, ranking, three output modes
+- `src/index.ts` — New `md_find` tool, updated server instructions (find-first workflow), version bump
+- `package.json` — Version 1.4.0
+- `README.md` — Documented `md_find`, updated tool table and workflow
+- `CHANGELOG.md` — This entry
+
+---
+
 ## v1.3.0 — Focus (2026-07-07)
 
 ### Removed tools
