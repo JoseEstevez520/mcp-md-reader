@@ -42,10 +42,10 @@ export interface GraphIndex {
 
 // ── Config ──────────────────────────────────────────────────────────────
 
-const INDEX_SUBPATH = '10_PROYECTOS_ACTUALES/Cerebro_Digital/05_Producto/graphd';
+const INDEX_DIRNAME = '.mcp-md-reader';        // index lives in <vault>/.mcp-md-reader/ by default
 const INDEX_FILENAME = 'graph-index.json';
 const STALE_MS = 60 * 60 * 1000; // 1 hour
-const IGNORE_DIRS = new Set(['node_modules', '.git', '.obsidian', 'ATTACHMENTS']);
+const IGNORE_DIRS = new Set(['node_modules', '.git', '.obsidian', 'ATTACHMENTS', '.mcp-md-reader']);
 
 // ── Compiler ────────────────────────────────────────────────────────────
 
@@ -230,7 +230,11 @@ let cachedVault: string | null = null;
 let cachedAt = 0;
 
 function indexPath(vaultRoot: string): string {
-  return join(vaultRoot, INDEX_SUBPATH, INDEX_FILENAME);
+  // Default: <vault>/.mcp-md-reader/graph-index.json.
+  // Override the directory with the MD_READER_INDEX_DIR env var if you prefer
+  // to keep the index outside the vault.
+  const dir = process.env.MD_READER_INDEX_DIR || join(vaultRoot, INDEX_DIRNAME);
+  return join(dir, INDEX_FILENAME);
 }
 
 export async function getIndex(vaultRoot: string): Promise<GraphIndex> {

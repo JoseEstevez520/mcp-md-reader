@@ -1,5 +1,28 @@
 # Changelog
 
+## v1.4.1 — Cleanup (2026-07-13)
+
+### Fixed
+- **Hardcoded index path.** `md_vault_index` wrote `graph-index.json` to a path
+  hardcoded to one personal vault (`10_PROYECTOS_ACTUALES/.../graphd`). It now
+  defaults to `<vault>/.mcp-md-reader/graph-index.json` (overridable via the
+  `MD_READER_INDEX_DIR` env var), and that folder is ignored by the vault walker.
+
+### Changed
+- **`md_find` repositioned (honesty pass).** Its description and the server
+  instructions now state clearly that `md_find` matches **structure** (headings,
+  tags, filenames), **not body prose**. It is structural navigation and a
+  **complement** to full-text search — for finding a word that lives in body
+  text, use Grep/full-text search. Benchmarking showed a plain full-text search
+  wins term-lookup (it reads the body); md_find's value is locating a section by
+  topic and then reading it cheaply with md_section.
+
+### Notes
+- Reading efficiency (md_tree + md_section) benchmarked at ~82–93% token savings
+  on large docs with full answer recall — this remains the core value.
+
+---
+
 ## v1.4.0 — Find (2026-07-13)
 
 ### New tool: `md_find`

@@ -84,22 +84,22 @@ async function loadFile(path: string): Promise<string> {
 const server = new McpServer(
   {
     name: 'mcp-md-reader',
-    version: '1.4.0',
+    version: '1.4.1',
   },
   {
     instructions: `mcp-md-reader provides intelligent markdown reading tools that save ~90% of tokens compared to reading full files.
 
 ## When to use these tools
 
-- **Finding where something is**: Use md_find FIRST with a natural-language need (e.g. "row level security multi-tenant"). It returns only the matching sections across the whole vault, ranked, without loading everything. This is the front door for large vaults.
-- **Reading .md files**: Use md_tree to see one file's heading structure, then md_section to read only the section you need. Do NOT read entire markdown files with generic file-reading tools when md_tree + md_section will do.
-- **Exploring relationships**: Use md_vault_index for graph queries — neighbors, shortest path, hubs, stats.
+- **Navigating to a section by topic**: Use md_find with a topic/title-oriented need (e.g. "rate limiting", "multi-tenant RLS"). It matches headings/tags/filenames (NOT body text) and returns the matching sections ranked. Use it to locate a section, then md_section to read it. For finding a specific word that lives in body prose, prefer full-text search (Grep) — md_find complements search, it does not replace it.
+- **Reading .md files**: Use md_tree to see one file's heading structure, then md_section to read only the section you need. This is the biggest token saver — do NOT read entire markdown files with generic file-reading tools when md_tree + md_section will do.
+- **Exploring relationships**: Use md_vault_index for graph queries — neighbors, shortest path, hubs, stats. Note: links are resolved from [[wikilinks]] and need reasonably unique note names.
 - **Checking metadata**: Use md_frontmatter to read just the YAML frontmatter without loading the full file.
 
 ## Recommended workflow
 
-1. md_find (query: what you're looking for) → the few sections that match
-2. md_section (path, heading) → read only the section you picked
+1. To find a word in body text → use full-text search (Grep). To navigate by topic → md_find.
+2. md_section (path, heading) → read only the section you located (biggest token saving)
 3. md_tree → if you need the full structure of one file
 4. md_vault_index → to explore links (neighbors) or paths between notes`,
   },
@@ -109,7 +109,7 @@ const server = new McpServer(
 
 server.tool(
   'md_find',
-  'Front door for navigating a vault: given a natural-language need, returns only the sections whose titles/tags match, ranked by relevance — without loading the whole vault. Then read one with md_section(path, heading). Deterministic (structural match on titles, tags, filenames — no embeddings).',
+  'Locate a section by its topic/title across the vault. Matches STRUCTURE — headings, tags and filenames — NOT body prose, and returns the matching sections ranked, without loading the whole vault; then read one with md_section(path, heading). Deterministic (no embeddings, no LLM). This is structural navigation and a COMPLEMENT to full-text search: to find a specific word that appears in body text, use Grep/full-text search instead.',
   {
     vault_path: z.string().describe('Absolute path to the vault root directory'),
     query: z.string().describe('What you are looking for, in natural language (e.g. "row level security multi-tenant")'),
