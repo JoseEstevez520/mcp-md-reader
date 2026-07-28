@@ -1,36 +1,45 @@
 <p align="center">
-  <h1 align="center">mcp-md-reader</h1>
-  <p align="center">
-    <strong>MCP server for intelligent markdown reading — read only what you need</strong>
-  </p>
-  <p align="center">
-    <img src="https://img.shields.io/badge/MCP-compatible-blue?style=flat-square" alt="MCP">
-    <img src="https://img.shields.io/badge/license-Apache_2.0-green?style=flat-square" alt="License">
-    <img src="https://img.shields.io/badge/node-%3E%3D18-brightgreen?style=flat-square" alt="Node">
-    <img src="https://img.shields.io/badge/token_savings-~90%25-orange?style=flat-square" alt="Token Savings">
-    <img src="https://img.shields.io/badge/version-1.4.0-purple?style=flat-square" alt="Version">
-  </p>
+  <img src="assets/md-reader-banner.svg" alt="mcp-md-reader — read only what you need" width="100%" />
 </p>
 
----
+<p align="center">
+  <img src="https://img.shields.io/badge/MCP-compatible-57a8ff" alt="MCP compatible" />
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-55e2cc" alt="Apache 2.0 license" /></a>
+  <img src="https://img.shields.io/badge/node-%E2%89%A518-3c873a" alt="Node.js 18 or later" />
+  <img src="https://img.shields.io/badge/token_savings-~90%25-ffb85c" alt="Around 90 percent token savings" />
+</p>
 
-> AI agents waste context reading entire markdown files when they only need one section. This server fixes that.
+<p align="center"><strong>Intelligent Markdown reading for MCP clients.</strong></p>
 
-## The problem
+**mcp-md-reader** helps AI agents navigate large Markdown files and vaults without paying the context cost of reading everything. It returns a compact structure first, then only the precise section, metadata, or graph information the agent needs.
 
-A 3,000-token markdown file might have 12 sections. The agent needs one. Without `mcp-md-reader`, it reads all 3,000 tokens. With it, it reads ~60 tokens for the tree and ~300 for the section. **~90% savings.**
+| Smaller context | Deterministic retrieval | Vault-aware |
+| :--- | :--- | :--- |
+| Read the relevant section instead of a whole 3,000-token document. | Fuzzy structural matching—no embeddings and no LLM calls. | Search, index, and traverse relationships across a Markdown vault. |
 
-## Tools
+> Start with `md_find` for a vault-wide question, then open the selected result with `md_section`.
 
-| Tool | What it does | Typical savings |
-|------|-------------|-----------------|
-| `md_find` | Find the sections that match a need, across the whole vault, ranked | — |
-| `md_tree` | Heading tree with estimated token counts | ~93% |
-| `md_section` | One section by name (fuzzy match) | ~88-99% |
-| `md_frontmatter` | YAML frontmatter only | ~99% |
-| `md_vault_index` | Query the full vault graph: stats, neighbors, paths, types | — |
+## Why it matters
 
-The intended workflow: `md_find` first with what you're looking for → it returns only the matching sections. Then `md_section` to read the one you picked. `md_tree` when you need one file's full structure, and `md_vault_index` to explore links between notes.
+A 3,000-token file with 12 sections may only contain one relevant 300-token answer. Without a structural reader, an agent reads all 3,000 tokens. With this server, it can inspect a compact tree first and retrieve only the needed section—typically saving around 90% of context.
+
+```text
+large Markdown file
+        │
+        ├── md_find / md_tree  → identify the relevant destination
+        ├── md_section         → retrieve only that section
+        └── md_vault_index     → explore connections across the vault
+```
+
+## MCP tools
+
+| Tool | What it does | Typical saving |
+| :--- | :--- | :---: |
+| `md_find` | Finds relevant sections across a vault and ranks them. | — |
+| `md_tree` | Returns a heading tree with token estimates. | ~93% |
+| `md_section` | Retrieves a fuzzy-matched section. | ~88–99% |
+| `md_frontmatter` | Returns YAML frontmatter only. | ~99% |
+| `md_vault_index` | Queries the compiled graph of the entire vault. | — |
 
 ## Setup
 
@@ -41,119 +50,69 @@ npm install
 npm run build
 ```
 
-Then register with Claude Code:
+Register it with an MCP client such as Claude Code:
 
 ```bash
 claude mcp add md-reader -- node /full/path/to/mcp-md-reader/dist/index.js
 ```
 
-Restart Claude Code. The 5 tools will appear as native tools in your session.
-
-## Tech stack
-
-<p>
-  <img src="https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&logo=typescript&logoColor=white" alt="TypeScript">
-  <img src="https://img.shields.io/badge/Node.js-339933?style=for-the-badge&logo=node.js&logoColor=white" alt="Node.js">
-  <img src="https://img.shields.io/badge/MCP_SDK-1C3C3C?style=for-the-badge" alt="MCP SDK">
-</p>
-
-| Layer | Detail |
-|-------|--------|
-| **Transport** | stdio (MCP protocol 2024-11-05) |
-| **Parser** | Pure string parsing, zero external deps |
-| **Cache** | LRU in memory + persistent disk cache (`%TEMP%/mcp-md-reader-cache/`) with mtime validation, 7-day TTL, 100 entries |
-| **Matching** | Fuzzy heading match with word-boundary, prefix, acronym, and CamelCase support |
-| **Vault index** | Compiled graph with BFS traversal, auto-recompile on stale (>1h) |
-
-## How it works
-
-The server parses markdown into a heading tree on first read, caches the result (validated by file modification time), and serves only the requested slice. The cache persists to disk and survives server restarts. No external parsing libraries — just string splitting by `#` headings with code-block awareness.
-
-The fuzzy matcher scores heading similarity using exact match, substring match, and word overlap. Short queries (2-3 chars) match on word boundaries, prefixes, acronyms (e.g. "UI" matches "User Interface"), and CamelCase boundaries.
+Restart the client and the five tools will be available natively.
 
 ## Example
 
-```
+```text
 > md_tree("notes/project.md")
 
 File: notes/project.md
 Full file: ~2428 tokens
 This tree: ~84 tokens
 Savings: ~97%
-# Project  (~7 tok)
-  ## Objective  (~59 tok)
-  ## Current state  (~804 tok)
-  ## Decisions  (~297 tok)
+# Project
+  ## Objective
+  ## Current state
+  ## Decisions
 
 > md_section("notes/project.md", "Decisions")
 
-Section: Decisions (level 2)
-Lines: 124-133
+Section: Decisions
 Section tokens: ~297 | Full file: ~2428 | Savings: ~88%
-## Decisions
-- Path B (pgvector + RLS) as baseline...
 ```
 
-## Finding sections (`md_find`)
+## Search a vault with `md_find`
 
-`md_find` is the front door for large vaults. You give it a need in plain language; it searches the compiled index and returns **only the sections whose titles, tags or filenames match**, ranked by how many of your terms they cover — never the whole vault. The consuming LLM reads the compact result and picks one section to open with `md_section`.
+`md_find` is the front door for broad questions. It searches a compiled index using deterministic title, tag, filename, substring, shared-prefix, acronym, and CamelCase matching. The result contains only matching document regions—not the full vault—and tells the client which section to open next.
 
-It is **deterministic**: pure structural matching (substring + shared-prefix, so `aislar` finds `Aislamiento`). No embeddings, no LLM calls at index time — same philosophy as the rest of the server. Three outcomes: matching regions (normal), a ranked document list (query too broad), or the top hubs as entry points (no match).
-
-```
+```text
 > md_find({vault_path: "/path/to/vault", query: "row level security multi-tenant"})
 
-Found 2 matching document(s) for "row level security multi-tenant" (showing 2).
-Read a section →  md_section(path, heading)
-/path/to/vault/base_de_datos/postgres.md   (in:1)
+Found 2 matching document(s).
+Read a section → md_section(path, heading)
+/path/to/vault/base_de_datos/postgres.md
   · Postgres › Row Level Security
-
-/path/to/vault/seguridad/multitenant.md   (in:1)
-  · Aislamiento multi-tenant
 ```
 
-## Vault index
+## Explore relationships with `md_vault_index`
 
-`md_vault_index` compiles all `.md` files into a graph and exposes queries over it. The index auto-recompiles when stale (>1 hour). `md_find` runs on this same index.
+The vault index compiles Markdown files into a graph and refreshes when stale. Query stats, a node, neighbors, a shortest path, nodes by type, the most connected hubs, or isolated notes.
 
-| Query | What it does | Parameters |
-|-------|-------------|------------|
-| `stats` | Total nodes, edges, types | — |
-| `node` | Full info for one node | `node_id` |
-| `neighbors` | Nodes within N hops | `node_id`, `depth` |
-| `search_type` | All nodes of a frontmatter type | `node_id` = type |
-| `most_connected` | Top N hubs | `depth` = N |
-| `isolated` | Nodes with zero connections | — |
-| `path` | Shortest path between two nodes | `node_id` = `"a>b"` |
+| Query | Purpose |
+| :--- | :--- |
+| `stats` | Total nodes, edges, and types. |
+| `node` / `neighbors` | Inspect a note and its local graph. |
+| `path` | Find the shortest connection between two notes. |
+| `search_type` | List notes of a frontmatter type. |
+| `most_connected` / `isolated` | Find hubs and orphaned notes. |
 
-```
-> md_vault_index({vault_path: "/path/to/vault", query: "neighbors", node_id: "mandatos", depth: 2})
+## Under the hood
 
-Neighbors of "mandatos" (depth 2): 8 nodes
-{ "mandatos": { "distance": 0, ... }, "agentes": { "distance": 1, ... }, ... }
-```
+- TypeScript + Node.js with the MCP SDK over stdio.
+- Pure, code-block-aware string parsing—no external parser dependency.
+- LRU memory cache plus persistent disk cache with mtime validation.
+- Fuzzy heading matching for exact, prefix, word-boundary, acronym, and CamelCase queries.
+- Vault graph traversal with automatic recompilation when the index is stale.
 
-## Performance
-
-| Metric | Value |
-|--------|-------|
-| Token savings (tree) | ~93% |
-| Token savings (tree + 1 section) | ~91% |
-| Cache speedup | 4.5x |
-| Parse time (14 files) | 1.6ms |
-| Vault index compile (699 nodes) | 355ms |
-| Avg query time | 0.61ms |
-| Fuzzy matcher | 14/14 |
-| Bugs | 0 |
-
-See [CHANGELOG.md](CHANGELOG.md) for full details.
+For release history and benchmark details, see [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
-Distributed under the [Apache 2.0](LICENSE) license.
-
----
-
-<p align="center">
-  <em>Built for <a href="https://github.com/modelcontextprotocol">MCP</a>-compatible AI agents.</em>
-</p>
+[Apache License 2.0](LICENSE)
