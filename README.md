@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/md-reader-banner.svg" alt="mcp-md-reader — read only what you need" width="100%" />
+  <img src="assets/readme-hero.png" alt="Read only what you need" width="100%" />
 </p>
 
 <p align="center">
