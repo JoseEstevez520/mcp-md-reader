@@ -1,13 +1,14 @@
 {
   "name": "mcp-md-reader",
   "version": "1.4.1",
-  "description": "Intelligent markdown reading tools — heading tree + on-demand section reading for 90%+ token savings",
+  "description": "Structural Markdown navigation and on-demand section reading for MCP clients",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "benchmark": "node dist/benchmark.js",
+    "benchmark": "npm run build && node dist/benchmark.js",
+    "test": "npm run build && node --test test/*.test.mjs",
     "dev": "tsc && node dist/benchmark.js"
   },
   "dependencies": {

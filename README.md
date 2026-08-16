@@ -6,7 +6,7 @@
   <img src="https://img.shields.io/badge/MCP-compatible-57a8ff" alt="MCP compatible" />
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-55e2cc" alt="Apache 2.0 license" /></a>
   <img src="https://img.shields.io/badge/node-%E2%89%A518-3c873a" alt="Node.js 18 or later" />
-  <img src="https://img.shields.io/badge/token_savings-~90%25-ffb85c" alt="Around 90 percent token savings" />
+  <a href="https://github.com/hashgraph-online/hol-guard"><img src="https://img.shields.io/badge/HOL%20Guard-passing-00a67e" alt="HOL Guard Scanner" /></a>
 </p>
 
 <p align="center"><strong>Intelligent Markdown reading for MCP clients.</strong></p>
@@ -21,7 +21,7 @@
 
 ## Why it matters
 
-A 3,000-token file with 12 sections may only contain one relevant 300-token answer. Without a structural reader, an agent reads all 3,000 tokens. With this server, it can inspect a compact tree first and retrieve only the needed section—typically saving around 90% of context.
+A 3,000-token file with 12 sections may only contain one relevant 300-token answer. Without a structural reader, an agent reads all 3,000 tokens. With this server, it can inspect a compact tree first and retrieve only the needed section. The exact reduction depends on the document and selected section.
 
 ```text
 large Markdown file
@@ -110,6 +110,27 @@ The vault index compiles Markdown files into a graph and refreshes when stale. Q
 - LRU memory cache plus persistent disk cache with mtime validation.
 - Fuzzy heading matching for exact, prefix, word-boundary, acronym, and CamelCase queries.
 - Vault graph traversal with automatic recompilation when the index is stale.
+
+## Security and filesystem scope
+
+The server runs locally with the filesystem permissions of the account that starts it. Tool calls
+accept file and vault paths, so a trusted MCP client can request any Markdown file readable by that
+account. Use a dedicated operating system account or equivalent filesystem controls when a stricter
+boundary is required. Parsed documents may be cached in the operating system temporary directory.
+See [SECURITY.md](SECURITY.md) for reporting and cache details.
+
+## Reproducible tests and benchmark
+
+```bash
+npm ci
+npm test
+npm run benchmark
+```
+
+The default benchmark uses only the public corpus in `test/fixtures`. To measure another corpus,
+set `MD_READER_BENCHMARK_DIR` to its directory before running the command. Token counts use
+`ceil(characters / 4)`, not a model tokenizer, and every reported saving applies only to the corpus
+that was measured.
 
 For release history and benchmark details, see [CHANGELOG.md](CHANGELOG.md).
 
