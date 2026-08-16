@@ -8,7 +8,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 
-test('bundled Codex plugin server starts and exposes its five tools', async () => {
+test('bundled Codex plugin server starts, exposes its tools, and reads a section', async () => {
   const client = new Client({ name: 'mcp-md-reader-smoke', version: '1.0.0' });
   const transport = new StdioClientTransport({
     command: process.execPath,
@@ -22,6 +22,17 @@ test('bundled Codex plugin server starts and exposes its five tools', async () =
       tools.map((tool) => tool.name).sort(),
       ['md_find', 'md_frontmatter', 'md_section', 'md_tree', 'md_vault_index'],
     );
+
+    const section = await client.callTool({
+      name: 'md_section',
+      arguments: {
+        path: join(repoRoot, 'test', 'fixtures', 'learning-notes.md'),
+        heading: 'adaptive explanation',
+      },
+    });
+    assert.equal(section.isError, undefined);
+    assert.match(section.content[0].text, /Section: Adaptive explanation/);
+    assert.match(section.content[0].text, /source can stay constant/);
   } finally {
     await client.close();
   }
