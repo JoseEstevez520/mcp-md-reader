@@ -12,7 +12,7 @@
     "dev": "tsc && node dist/benchmark.js"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.1",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "yaml": "^2.9.0"
   },
   "devDependencies": {
