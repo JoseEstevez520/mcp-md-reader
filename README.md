@@ -58,6 +58,20 @@ claude mcp add md-reader -- node /full/path/to/mcp-md-reader/dist/index.js
 
 Restart the client and the five tools will be available natively.
 
+### Codex plugin
+
+The repository also contains a Codex plugin manifest and a bundled MCP executable. The bundle is
+generated from `src/index.ts`, contains its runtime dependencies, and is smoke-tested against the
+five exposed tools:
+
+```bash
+npm run bundle:plugin
+npm test
+```
+
+The plugin entry point is `.codex-plugin/plugin.json`; its bundled server configuration is in
+`.mcp.json`.
+
 ## Example
 
 ```text
