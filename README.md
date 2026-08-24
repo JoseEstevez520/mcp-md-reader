@@ -13,6 +13,13 @@
 
 **mcp-md-reader** helps AI agents navigate large Markdown files and vaults without paying the context cost of reading everything. It returns a compact structure first, then only the precise section, metadata, or graph information the agent needs.
 
+## Used in SkillNet
+
+[SkillNet](https://github.com/ANFAIA/SkillNet) uses mcp-md-reader in its post-Markdown research:
+agents can inspect the structure of company documentation and retrieve only the sections needed
+for course generation. The reader remains a standalone MCP server; SkillNet is a consumer and
+validation context, not a required runtime dependency.
+
 | Smaller context | Deterministic retrieval | Vault-aware |
 | :--- | :--- | :--- |
 | Read the relevant section instead of a whole 3,000-token document. | Fuzzy structural matching—no embeddings and no LLM calls. | Search, index, and traverse relationships across a Markdown vault. |
